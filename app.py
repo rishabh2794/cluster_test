@@ -8,7 +8,7 @@ import geopandas as gpd
 from sklearn.cluster import DBSCAN
 
 import folium
-from folium.plugins import MarkerCluster
+from folium.plugins import MarkerCluster, Draw
 from shapely.geometry import Point
 from openpyxl import load_workbook
 
@@ -40,7 +40,7 @@ with st.sidebar:
         "- CSV must include LATITUDE/LONGITUDE in decimal degrees.\n"
         "- Clustering radius is in **meters** (converted to **radians** for haversine).\n"
         "- If KML ward reading fails, convert to GeoJSON and try again.\n"
-        "- Select your starting location by clicking on the map in Step 4A."
+        "- In Step 4A, click the marker icon on the map to fetch your location automatically."
     )
 
 subcategory_options = [
@@ -186,7 +186,8 @@ if csv_file:
             st.stop()
         
         # Center map on the mean of the data points
-        st.session_state.map_center = [df['LATITUDE'].mean(), df['LONGITUDE'].mean()]
+        if not df.empty and 'LATITUDE' in df.columns and 'LONGITUDE' in df.columns:
+            st.session_state.map_center = [df['LATITUDE'].mean(), df['LONGITUDE'].mean()]
 
         # Filter & clean
         df = df.copy()
@@ -272,21 +273,28 @@ if csv_file:
 
         unique_statuses = sorted(gdf_all['STATUS'].dropna().astype(str).unique().tolist())
         default_statuses = [s for s in unique_statuses if s.lower() in ("open", "pending", "in progress")]
-        include_statuses = st.multiselect("Eligible ticket statuses", options=unique_statuses, default=default_statuses or unique_statuses)
+        include_statuses = st.multoselect("Eligible ticket statuses", options=unique_statuses, default=default_statuses or unique_statuses)
 
         wards_in_data = sorted(gdf_all['WARD'].dropna().astype(str).unique().tolist())
-        ward_filter = st.multiselect("Limit to ward(s) (optional)", options=wards_in_data, default=[])
+        ward_filter = st.multoselect("Limit to ward(s) (optional)", options=wards_in_data, default=[])
 
         travel_mode = st.selectbox("Travel mode", ["driving", "walking", "two_wheeler"], index=0)
         batch_size = st.slider("Batch size (next N tickets)", min_value=1, max_value=10, value=10)
 
         # --- Get current location using an interactive map ---
         st.markdown("### Your Location")
-        st.caption("Click on the map to set your starting point for the route.")
+        st.caption("Click the marker icon on the map to fetch your location, or click anywhere on the map to set a manual starting point.")
         
         m = folium.Map(location=st.session_state.map_center, zoom_start=12)
         
-        # Add a marker for the last clicked location to the map
+        # Add the drawing tool with the "locate me" feature
+        Draw(export=True, 
+             draw_options={'polyline': False, 'polygon': False, 'circle': False, 
+                           'rectangle': False, 'circlemarker': False,
+                           'marker': {'showLocation': True}}
+            ).add_to(m)
+
+        # Add a marker for the last selected location to the map
         if st.session_state.origin_coords:
             folium.Marker(
                 location=[st.session_state.origin_coords['lat'], st.session_state.origin_coords['lng']],
@@ -294,11 +302,22 @@ if csv_file:
                 icon=folium.Icon(color="green"),
             ).add_to(m)
         
-        # Render the map and get the last clicked coordinates
+        # Render the map and get data back
         map_data = st_folium(m, width=725, height=400)
 
-        if map_data and map_data.get("last_clicked"):
-            st.session_state.origin_coords = map_data["last_clicked"]
+        # Logic to update origin coordinates from map interactions
+        new_coords = None
+        if map_data.get("all_drawings") and map_data["all_drawings"]:
+            # User used the "locate me" or drew a marker
+            drawing = map_data["all_drawings"][0]
+            coords = drawing["geometry"]["coordinates"]
+            new_coords = {"lat": coords[1], "lng": coords[0]}
+        elif map_data.get("last_clicked"):
+            # User clicked on the map
+            new_coords = map_data["last_clicked"]
+
+        if new_coords:
+            st.session_state.origin_coords = new_coords
 
         origin_lat = origin_lon = None
         if st.session_state.origin_coords:
@@ -334,12 +353,9 @@ if csv_file:
         if sequence_rows:
             # Build navigation URL with waypoints
             waypoints = [(float(r['LATITUDE']), float(r['LONGITUDE'])) for r in sequence_rows]
-            first_stop, last_stop = waypoints[0], waypoints[-1]
-
-            # The destination for the URL is the last point. All points before it are waypoints.
+            last_stop = waypoints[-1]
             mid_waypoints = waypoints[:-1] if len(waypoints) > 1 else []
             nav_url = google_maps_url(origin_lat, origin_lon, last_stop[0], last_stop[1], mode=travel_mode, waypoints=mid_waypoints)
-
 
             # Approx total distance & list
             total_m = 0.0
@@ -404,7 +420,7 @@ if csv_file:
             display_map_center = [float(sequence_rows[0]['LATITUDE']), float(sequence_rows[0]['LONGITUDE'])]
             zoom_level = 16
         else:
-            display_map_center = [float(df['LATITUDE'].mean()), float(df['LONGITUDE'].mean())]
+            display_map_center = st.session_state.map_center
             zoom_level = 13
 
         display_map = folium.Map(location=display_map_center, zoom_start=zoom_level)
@@ -426,6 +442,9 @@ if csv_file:
 
         target_id = st.session_state.get('current_target_id')
         batch_ids = st.session_state.get('batch_target_ids', set())
+
+        # Create a feature group for ticket markers
+        ticket_markers = folium.FeatureGroup(name="Ticket Markers")
 
         if map_type == "Show all markers (Type 1)":
             for _, row in gdf_all.iterrows():
@@ -451,9 +470,9 @@ if csv_file:
                         f"Ward: {row['WARD']}<br>"
                         f"Lat: {row['LATITUDE']}, Lon: {row['LONGITUDE']}"
                     )
-                ).add_to(display_map)
-        else:
-            mc = MarkerCluster(name="Tickets").add_to(display_map)
+                ).add_to(ticket_markers)
+        else: # Use Dynamic Clustering (MarkerCluster)
+            mc = MarkerCluster(name="Tickets (Clustered)").add_to(ticket_markers)
             for _, row in gdf_all.iterrows():
                 rid = str(row['ISSUE ID'])
                 is_first = (rid == str(target_id)) if target_id else False
@@ -470,9 +489,12 @@ if csv_file:
                     icon=folium.Icon(color=icon_color, icon='info-sign')
                 ).add_to(mc)
         
+        ticket_markers.add_to(display_map)
+        folium.LayerControl().add_to(display_map)
+
         # Display the final map using st_folium
         st.subheader("Results Map")
-        st_folium(display_map, width=725, height=500)
+        st_folium(display_map, use_container_width=True)
         
         # Save map to HTML for download
         html_filename = "Clustering_Application_Map.html"
