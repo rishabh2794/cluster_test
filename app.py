@@ -14,7 +14,7 @@ from openpyxl import load_workbook
 
 # Auto geolocation (browser)
 try:
-    from streamlit_geolocation import st_geolocation
+    from streamlit_geolocator import geolocator
     HAVE_GEO = True
 except Exception:
     HAVE_GEO = False
@@ -280,16 +280,22 @@ if csv_file:
         batch_size = st.slider("Batch size (next N tickets)", min_value=1, max_value=10, value=10)
 
         # Get current location (auto-fetch with manual fallback if library is missing)
+       # Get current location (auto-fetch with manual fallback if library is missing)
         origin_lat = origin_lon = None
         st.markdown("### Your Location")
         if HAVE_GEO:
-            st.caption("Click the button below to fetch your current location automatically (requires browser permission).")
-            # The st_geolocation() function renders a button to trigger the browser's location API
-            loc = st_geolocation()
-            if loc and isinstance(loc, dict) and loc.get("latitude") and loc.get("longitude"):
-                origin_lat = float(loc["latitude"])
-                origin_lon = float(loc["longitude"])
+    # This component displays a button and returns the location when clicked
+            location = geolocator()
+
+            if location:
+                origin_lat = location.latitude
+                origin_lon = location.longitude
                 st.success(f"✅ Location automatically fetched: {origin_lat:.6f}, {origin_lon:.6f}")
+            else:
+                st.warning(
+        "Auto-geolocation is not available. Please install the required package:\n\n"
+        "`pip install streamlit-geolocator`"
+    )
         else:
             st.warning(
                 "Auto-geolocation is not available. Please install the required package:\n\n"
