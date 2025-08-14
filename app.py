@@ -8,7 +8,7 @@ import geopandas as gpd
 from sklearn.cluster import DBSCAN
 
 import folium
-from folium.plugins import MarkerCluster, Draw
+from folium.plugins import MarkerCluster
 from shapely.geometry import Point
 from openpyxl import load_workbook
 
@@ -40,7 +40,7 @@ with st.sidebar:
         "- CSV must include LATITUDE/LONGITUDE in decimal degrees.\n"
         "- Clustering radius is in **meters** (converted to **radians** for haversine).\n"
         "- If KML ward reading fails, convert to GeoJSON and try again.\n"
-        "- In Step 4A, click the marker icon on the map to fetch your location automatically."
+        "- Select your starting location by clicking on the map in Step 4A."
     )
 
 subcategory_options = [
@@ -273,28 +273,21 @@ if csv_file:
 
         unique_statuses = sorted(gdf_all['STATUS'].dropna().astype(str).unique().tolist())
         default_statuses = [s for s in unique_statuses if s.lower() in ("open", "pending", "in progress")]
-        include_statuses = st.multoselect("Eligible ticket statuses", options=unique_statuses, default=default_statuses or unique_statuses)
+        include_statuses = st.multiselect("Eligible ticket statuses", options=unique_statuses, default=default_statuses or unique_statuses)
 
         wards_in_data = sorted(gdf_all['WARD'].dropna().astype(str).unique().tolist())
-        ward_filter = st.multoselect("Limit to ward(s) (optional)", options=wards_in_data, default=[])
+        ward_filter = st.multiselect("Limit to ward(s) (optional)", options=wards_in_data, default=[])
 
         travel_mode = st.selectbox("Travel mode", ["driving", "walking", "two_wheeler"], index=0)
         batch_size = st.slider("Batch size (next N tickets)", min_value=1, max_value=10, value=10)
 
         # --- Get current location using an interactive map ---
         st.markdown("### Your Location")
-        st.caption("Click the marker icon on the map to fetch your location, or click anywhere on the map to set a manual starting point.")
+        st.caption("Click on the map to set your starting point for the route.")
         
         m = folium.Map(location=st.session_state.map_center, zoom_start=12)
         
-        # Add the drawing tool with the "locate me" feature
-        Draw(export=True, 
-             draw_options={'polyline': False, 'polygon': False, 'circle': False, 
-                           'rectangle': False, 'circlemarker': False,
-                           'marker': {'showLocation': True}}
-            ).add_to(m)
-
-        # Add a marker for the last selected location to the map
+        # Add a marker for the last clicked location to the map
         if st.session_state.origin_coords:
             folium.Marker(
                 location=[st.session_state.origin_coords['lat'], st.session_state.origin_coords['lng']],
@@ -302,22 +295,11 @@ if csv_file:
                 icon=folium.Icon(color="green"),
             ).add_to(m)
         
-        # Render the map and get data back
+        # Render the map and get the last clicked coordinates
         map_data = st_folium(m, width=725, height=400)
 
-        # Logic to update origin coordinates from map interactions
-        new_coords = None
-        if map_data.get("all_drawings") and map_data["all_drawings"]:
-            # User used the "locate me" or drew a marker
-            drawing = map_data["all_drawings"][0]
-            coords = drawing["geometry"]["coordinates"]
-            new_coords = {"lat": coords[1], "lng": coords[0]}
-        elif map_data.get("last_clicked"):
-            # User clicked on the map
-            new_coords = map_data["last_clicked"]
-
-        if new_coords:
-            st.session_state.origin_coords = new_coords
+        if map_data and map_data.get("last_clicked"):
+            st.session_state.origin_coords = map_data["last_clicked"]
 
         origin_lat = origin_lon = None
         if st.session_state.origin_coords:
