@@ -1,0 +1,10 @@
+streamlit
+pandas
+numpy
+geopandas
+scikit-learn
+shapely
+folium
+openpyxl
+fiona
+streamlit-geolocation
