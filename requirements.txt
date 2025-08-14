@@ -8,3 +8,4 @@ folium
 openpyxl
 fiona
 streamlit-folium
+folium-draw
