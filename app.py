@@ -12,9 +12,9 @@ from folium.plugins import MarkerCluster
 from shapely.geometry import Point
 from openpyxl import load_workbook
 
-# Auto geolocation (browser)
+# Auto geolocation (browser) - Using the reliable streamlit-js-fetch
 try:
-    from streamlit_geolocator import geolocator
+    from streamlit_js_fetch import get_geolocation
     HAVE_GEO = True
 except Exception:
     HAVE_GEO = False
@@ -86,12 +86,8 @@ def google_maps_url(origin_lat, origin_lon, dest_lat, dest_lon, mode="driving", 
         dest_str = f"{wp_str}/{dest_lat},{dest_lon}"
     else:
         dest_str = f"{dest_lat},{dest_lon}"
-    
-    # Travel mode mapping for URL
-    travel_modes = {"driving": "data=!4m2!4m1!3e0", "walking": "data=!4m2!4m1!3e2", "two_wheeler": "data=!4m2!4m1!3e0"}
-    travel = travel_modes.get(mode, "data=!4m2!4m1!3e0") # Default to driving
 
-    return f"{base}{origin}/{dest_str}/{travel}"
+    return f"{base}{origin}/{dest_str}"
 
 
 def hyperlinkify_excel(excel_path: str, sheet_name: str = "Clustering Application Summary") -> None:
@@ -120,7 +116,7 @@ def load_wards_uploaded(file) -> gpd.GeoDataFrame | None:
             wards = gpd.read_file(tmp_path)
         elif suffix == "kml":
             if HAS_FIONA:
-                # This call is now sufficient with modern libraries
+                # This call is sufficient with modern libraries
                 wards = gpd.read_file(tmp_path, driver='KML')
             else:
                 st.error(
@@ -280,28 +276,23 @@ if csv_file:
         batch_size = st.slider("Batch size (next N tickets)", min_value=1, max_value=10, value=10)
 
         # Get current location (auto-fetch with manual fallback if library is missing)
-       # Get current location (auto-fetch with manual fallback if library is missing)
         origin_lat = origin_lon = None
         st.markdown("### Your Location")
         if HAVE_GEO:
-    # This component displays a button and returns the location when clicked
-            location = geolocator()
+            st.caption("Click the button below to fetch your current location automatically (requires browser permission).")
+            # This component returns a dictionary, or None if not available.
+            location = get_geolocation()
 
-            if location:
-                origin_lat = location.latitude
-                origin_lon = location.longitude
+            if location and location.get("coords"):
+                origin_lat = location["coords"]["latitude"]
+                origin_lon = location["coords"]["longitude"]
                 st.success(f"✅ Location automatically fetched: {origin_lat:.6f}, {origin_lon:.6f}")
-            else:
-                st.warning(
-        "Auto-geolocation is not available. Please install the required package:\n\n"
-        "`pip install streamlit-geolocator`"
-    )
         else:
             st.warning(
                 "Auto-geolocation is not available. Please install the required package:\n\n"
-                "`pip install streamlit-geolocation`"
+                "`pip install streamlit-js-fetch`"
             )
-            # Re-introduce manual input as the ONLY fallback if the library is missing
+            # Add manual input as a fallback if auto-geolocation is not installed
             st.info("Alternatively, you can provide your location manually:")
             manual_lat = st.text_input("Manual latitude", value="")
             manual_lon = st.text_input("Manual longitude", value="")
@@ -312,7 +303,6 @@ if csv_file:
                     st.success(f"✅ Manual location set: {origin_lat:.6f}, {origin_lon:.6f}")
                 except Exception:
                     st.error("Invalid manual coordinates. Example: 26.8467 (lat), 80.9462 (lon)")
-
 
         # Build pool from ALL filtered points
         pool = gdf_all.copy()
@@ -343,7 +333,7 @@ if csv_file:
             # Build navigation URL with waypoints
             waypoints = [(float(r['LATITUDE']), float(r['LONGITUDE'])) for r in sequence_rows]
             first_stop, last_stop = waypoints[0], waypoints[-1]
-            
+
             # The destination for the URL is the last point. All points before it are waypoints.
             mid_waypoints = waypoints[:-1] if len(waypoints) > 1 else []
             nav_url = google_maps_url(origin_lat, origin_lon, last_stop[0], last_stop[1], mode=travel_mode, waypoints=mid_waypoints)
@@ -383,11 +373,11 @@ if csv_file:
             with c1:
                 if st.button("✅ Mark first as Done (visited)"):
                     st.session_state.visited_ticket_ids.add(str(sequence_rows[0]['ISSUE ID']))
-                    st.experimental_rerun()
+                    st.rerun()
             with c2:
                 if st.button("⏭️ Skip first ticket"):
                     st.session_state.skipped_ticket_ids.add(str(sequence_rows[0]['ISSUE ID']))
-                    st.experimental_rerun()
+                    st.rerun()
         else:
             st.info("Provide your location to compute a batch route.")
 
