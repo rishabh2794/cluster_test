@@ -12,12 +12,8 @@ from folium.plugins import MarkerCluster
 from shapely.geometry import Point
 from openpyxl import load_workbook
 
-# Auto geolocation (browser) - Using the reliable streamlit-js-fetch
-try:
-    from streamlit_js_fetch import get_geolocation
-    HAVE_GEO = True
-except Exception:
-    HAVE_GEO = False
+# Use streamlit-folium for interactive map-based location selection
+from streamlit_folium import st_folium
 
 # Optional: improve KML handling if available
 try:
@@ -44,7 +40,7 @@ with st.sidebar:
         "- CSV must include LATITUDE/LONGITUDE in decimal degrees.\n"
         "- Clustering radius is in **meters** (converted to **radians** for haversine).\n"
         "- If KML ward reading fails, convert to GeoJSON and try again.\n"
-        "- Auto location requires allowing the browser's location permission."
+        "- Select your starting location by clicking on the map in Step 4A."
     )
 
 subcategory_options = [
@@ -80,14 +76,16 @@ def haversine_m(lat1, lon1, lat2, lon2) -> float:
 def google_maps_url(origin_lat, origin_lon, dest_lat, dest_lon, mode="driving", waypoints=None) -> str:
     base = "https://www.google.com/maps/dir/"
     origin = f"{origin_lat},{origin_lon}"
-    # The Google Maps URL structure for waypoints is /origin/waypoint1/waypoint2/.../destination
+    destination = f"{dest_lat},{dest_lon}"
+    
+    waypoint_str = ""
     if waypoints:
-        wp_str = "/".join([f"{lat},{lon}" for (lat, lon) in waypoints])
-        dest_str = f"{wp_str}/{dest_lat},{dest_lon}"
-    else:
-        dest_str = f"{dest_lat},{dest_lon}"
+        waypoint_str = "/".join([f"{lat},{lon}" for lat, lon in waypoints])
 
-    return f"{base}{origin}/{dest_str}"
+    # Construct URL: /origin/waypoint1/waypoint2/.../destination
+    full_path = "/".join(filter(None, [origin, waypoint_str, destination]))
+    
+    return f"{base}{full_path}"
 
 
 def hyperlinkify_excel(excel_path: str, sheet_name: str = "Clustering Application Summary") -> None:
@@ -155,6 +153,10 @@ if "current_target_id" not in st.session_state:
     st.session_state.current_target_id = None
 if "batch_target_ids" not in st.session_state:
     st.session_state.batch_target_ids = set()
+if 'map_center' not in st.session_state:
+    st.session_state.map_center = [12.9716, 77.5946] # Default to Bengaluru
+if 'origin_coords' not in st.session_state:
+    st.session_state.origin_coords = None
 
 # -------------------------
 # UI — Inputs
@@ -182,6 +184,9 @@ if csv_file:
         if missing:
             st.error(f"Missing required columns: {missing}")
             st.stop()
+        
+        # Center map on the mean of the data points
+        st.session_state.map_center = [df['LATITUDE'].mean(), df['LONGITUDE'].mean()]
 
         # Filter & clean
         df = df.copy()
@@ -275,34 +280,31 @@ if csv_file:
         travel_mode = st.selectbox("Travel mode", ["driving", "walking", "two_wheeler"], index=0)
         batch_size = st.slider("Batch size (next N tickets)", min_value=1, max_value=10, value=10)
 
-        # Get current location (auto-fetch with manual fallback if library is missing)
-        origin_lat = origin_lon = None
+        # --- Get current location using an interactive map ---
         st.markdown("### Your Location")
-        if HAVE_GEO:
-            st.caption("Click the button below to fetch your current location automatically (requires browser permission).")
-            # This component returns a dictionary, or None if not available.
-            location = get_geolocation()
+        st.caption("Click on the map to set your starting point for the route.")
+        
+        m = folium.Map(location=st.session_state.map_center, zoom_start=12)
+        
+        # Add a marker for the last clicked location to the map
+        if st.session_state.origin_coords:
+            folium.Marker(
+                location=[st.session_state.origin_coords['lat'], st.session_state.origin_coords['lng']],
+                popup="Your Starting Location",
+                icon=folium.Icon(color="green"),
+            ).add_to(m)
+        
+        # Render the map and get the last clicked coordinates
+        map_data = st_folium(m, width=725, height=400)
 
-            if location and location.get("coords"):
-                origin_lat = location["coords"]["latitude"]
-                origin_lon = location["coords"]["longitude"]
-                st.success(f"✅ Location automatically fetched: {origin_lat:.6f}, {origin_lon:.6f}")
-        else:
-            st.warning(
-                "Auto-geolocation is not available. Please install the required package:\n\n"
-                "`pip install streamlit-js-fetch`"
-            )
-            # Add manual input as a fallback if auto-geolocation is not installed
-            st.info("Alternatively, you can provide your location manually:")
-            manual_lat = st.text_input("Manual latitude", value="")
-            manual_lon = st.text_input("Manual longitude", value="")
-            if manual_lat.strip() and manual_lon.strip():
-                try:
-                    origin_lat = float(manual_lat)
-                    origin_lon = float(manual_lon)
-                    st.success(f"✅ Manual location set: {origin_lat:.6f}, {origin_lon:.6f}")
-                except Exception:
-                    st.error("Invalid manual coordinates. Example: 26.8467 (lat), 80.9462 (lon)")
+        if map_data and map_data.get("last_clicked"):
+            st.session_state.origin_coords = map_data["last_clicked"]
+
+        origin_lat = origin_lon = None
+        if st.session_state.origin_coords:
+            origin_lat = st.session_state.origin_coords['lat']
+            origin_lon = st.session_state.origin_coords['lng']
+            st.success(f"✅ Starting location set: {origin_lat:.6f}, {origin_lon:.6f}")
 
         # Build pool from ALL filtered points
         pool = gdf_all.copy()
@@ -379,14 +381,14 @@ if csv_file:
                     st.session_state.skipped_ticket_ids.add(str(sequence_rows[0]['ISSUE ID']))
                     st.rerun()
         else:
-            st.info("Provide your location to compute a batch route.")
+            st.info("Set your starting location on the map to compute a batch route.")
 
         # -------------------------
         # Step 5 — Map Display (ALL filtered points, batch highlighted)
         # -------------------------
         st.subheader("Step 5: Map Display Options")
         st.write(f"**Total clusters found (non-noise)**: {df[df['CLUSTER NUMBER']!=-1]['CLUSTER NUMBER'].nunique()}")
-        center_on_first = st.checkbox("Center map on first stop (if any)", value=False)
+        center_on_first = st.checkbox("Center map on first stop (if any)", value=True)
 
         map_type = st.radio(
             "Select map type:",
@@ -399,20 +401,28 @@ if csv_file:
 
         # Map center
         if center_on_first and sequence_rows:
-            map_center = [float(sequence_rows[0]['LATITUDE']), float(sequence_rows[0]['LONGITUDE'])]
+            display_map_center = [float(sequence_rows[0]['LATITUDE']), float(sequence_rows[0]['LONGITUDE'])]
             zoom_level = 16
         else:
-            map_center = [float(df['LATITUDE'].mean()), float(df['LONGITUDE'].mean())]
+            display_map_center = [float(df['LATITUDE'].mean()), float(df['LONGITUDE'].mean())]
             zoom_level = 13
 
-        m = folium.Map(location=map_center, zoom_start=zoom_level)
+        display_map = folium.Map(location=display_map_center, zoom_start=zoom_level)
 
         # Ward overlay (if provided)
         if wards_gdf is not None and not wards_gdf.empty:
             try:
-                folium.GeoJson(wards_gdf, name="Wards").add_to(m)
+                folium.GeoJson(wards_gdf, name="Wards").add_to(display_map)
             except Exception:
                 pass
+
+        # Add marker for the selected origin
+        if origin_lat is not None:
+             folium.Marker(
+                location=[origin_lat, origin_lon],
+                popup="Your Starting Location",
+                icon=folium.Icon(color="green", icon="star"),
+            ).add_to(display_map)
 
         target_id = st.session_state.get('current_target_id')
         batch_ids = st.session_state.get('batch_target_ids', set())
@@ -441,9 +451,9 @@ if csv_file:
                         f"Ward: {row['WARD']}<br>"
                         f"Lat: {row['LATITUDE']}, Lon: {row['LONGITUDE']}"
                     )
-                ).add_to(m)
+                ).add_to(display_map)
         else:
-            mc = MarkerCluster(name="Tickets").add_to(m)
+            mc = MarkerCluster(name="Tickets").add_to(display_map)
             for _, row in gdf_all.iterrows():
                 rid = str(row['ISSUE ID'])
                 is_first = (rid == str(target_id)) if target_id else False
@@ -459,10 +469,14 @@ if csv_file:
                     ),
                     icon=folium.Icon(color=icon_color, icon='info-sign')
                 ).add_to(mc)
-
-        folium.LayerControl().add_to(m)
+        
+        # Display the final map using st_folium
+        st.subheader("Results Map")
+        st_folium(display_map, width=725, height=500)
+        
+        # Save map to HTML for download
         html_filename = "Clustering_Application_Map.html"
-        m.save(html_filename)
+        display_map.save(html_filename)
 
         # -------------------------
         # Step 6 — Downloads
