@@ -7,4 +7,4 @@ shapely
 folium
 openpyxl
 fiona
-streamlit-geolocator
+streamlit-js-fetch
