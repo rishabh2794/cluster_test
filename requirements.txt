@@ -7,4 +7,4 @@ shapely
 folium
 openpyxl
 fiona
-streamlit-js-fetch
+streamlit-folium
