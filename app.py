@@ -120,7 +120,7 @@ def load_wards_uploaded(file) -> gpd.GeoDataFrame | None:
             wards = gpd.read_file(tmp_path)
         elif suffix == "kml":
             if HAS_FIONA:
-                gpd.io.file.fiona.drvsupport.supported_drivers['KML'] = 'rw'
+                # This call is now sufficient with modern libraries
                 wards = gpd.read_file(tmp_path, driver='KML')
             else:
                 st.error(
