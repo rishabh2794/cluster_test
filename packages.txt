@@ -1,5 +1,4 @@
 gdal-bin
 libgdal-dev
-libgeos-dev
 libproj-dev
-libkml-dev
+libgeos-dev
