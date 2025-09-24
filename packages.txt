@@ -2,3 +2,7 @@ gdal-bin
 libgdal-dev
 libproj-dev
 libgeos-dev
+git add requirements.txt packages.txt
+git commit -m "Restore full app with GeoPandas + system packages"
+git push
+
