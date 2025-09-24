@@ -1,9 +1,11 @@
 streamlit
 pandas
 numpy
-scikit-learn
-folium
-streamlit-folium
-requests
-openpyxl
 geopandas
+scikit-learn
+shapely
+folium
+openpyxl
+fiona
+streamlit-folium
+folium-draw
