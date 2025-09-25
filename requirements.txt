@@ -3,9 +3,8 @@ pandas
 numpy
 geopandas
 scikit-learn
-shapely
 folium
+shapely
 openpyxl
-fiona
+requests
 streamlit-folium
-folium-draw
