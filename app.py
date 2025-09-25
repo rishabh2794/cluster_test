@@ -352,8 +352,40 @@ if csv_file:
             folium.Marker(location=[origin_lat, origin_lon], popup="Your Starting Location",
                           icon=folium.Icon(color="green", icon="star")).add_to(display_map)
 
-        target_id, batch_ids = st.session_state.get('current_target_id'), st.session_state.get('batch_target_ids', set())
-        ticket_markers = folium.FeatureGroup(name="Ticket Markers")
         if map_type == "Show all markers (Type 1)":
-            for _, row in gdf_all.iterrows():
-                rid = str(row['ISSUE ID']); is_first = (rid == str(target_id)) if target_id else False; in_
+    for _, row in gdf_all.iterrows():
+        rid = str(row['ISSUE ID'])
+        is_first = (rid == str(target_id)) if target_id else False
+        in_batch = rid in batch_ids
+        color, size = ('green', 10) if is_first else (('orange', 9) if in_batch else ('red', 7))
+        folium.CircleMarker(
+            location=[float(row['LATITUDE']), float(row['LONGITUDE'])],
+            radius=size,
+            color=color,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.9 if (is_first or in_batch) else 0.85,
+            popup=(
+                f"Cluster {int(row['CLUSTER NUMBER']) if row['IS_CLUSTERED'] else 'N/A'}<br>"
+                f"Issue ID: {row['ISSUE ID']}<br>"
+                f"Ward: {row['WARD']}<br>"
+                f"Lat: {row['LATITUDE']}, Lon: {row['LONGITUDE']}"
+            )
+        ).add_to(ticket_markers)
+else:
+    mc = MarkerCluster(name="Tickets (Clustered)").add_to(ticket_markers)
+    for _, row in gdf_all.iterrows():
+        rid = str(row['ISSUE ID'])
+        is_first = (rid == str(target_id)) if target_id else False
+        in_batch = rid in batch_ids
+        icon_color = 'green' if is_first else ('orange' if in_batch else 'red')
+        folium.Marker(
+            location=[float(row['LATITUDE']), float(row['LONGITUDE'])],
+            popup=(
+                f"Cluster {int(row['CLUSTER NUMBER']) if row['IS_CLUSTERED'] else 'N/A'}<br>"
+                f"Issue ID: {row['ISSUE ID']}<br>"
+                f"Ward: {row['WARD']}<br>"
+                f"Lat: {row['LATITUDE']}, Lon: {row['LONGITUDE']}"
+            ),
+            icon=folium.Icon(color=icon_color, icon='info-sign')
+        ).add_to(mc)
